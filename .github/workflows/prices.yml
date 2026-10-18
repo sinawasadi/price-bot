@@ -2,7 +2,7 @@ name: قیمت‌ها
 
 on:
   schedule:
-    - cron: "*/15 * * * *"   # هر ۵ دقیقه
+    - cron: "*/10 * * * *"   # هر ۵ دقیقه
   workflow_dispatch:         # دکمه‌ی اجرای دستی
 
 permissions:
