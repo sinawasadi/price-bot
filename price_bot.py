@@ -27,7 +27,7 @@ BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
 CHANNEL_ID = os.environ.get("CHANNEL_ID", "")
 
 # آیدی کانال که در پایان هر پیام نوشته می‌شود
-CHANNEL_TAG = "@HyperEcon"
+CHANNEL_TAG = "@Hypertech_ir"
 
 INTERVAL_SECONDS = 600          # هر ۱۰ دقیقه (فقط در حالت سرور)
 
