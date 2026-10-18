@@ -4,17 +4,15 @@
 ربات قیمت لحظه‌ای ارز، طلا و نقره برای کانال تلگرام (منبع قیمت: tgju)
 
 طرز کار:
-  1) یک سرویس کوچک (tgju-api-go) قیمت‌ها را از سایت tgju می‌خواند و به شکل JSON می‌دهد.
-  2) این اسکریپت از آن سرویس قیمت می‌گیرد و هر بار یک پیام جدید در کانال می‌فرستد.
+  - قیمت‌ها را از فید زنده‌ی خود tgju می‌گیرد (همان فیدی که سایت برای بروزرسانی لحظه‌ای استفاده می‌کند).
+  - هر بار یک پیام جدید در کانال می‌فرستد.
 
-اجرای سرویس قیمت (یک بار):
-  docker run -d --restart always -p 8080:8080 ghcr.io/amiranmanesh/tgju-api-go:latest
-
-اجرای ربات:
+اجرا:
   pip install requests
   export BOT_TOKEN="توکن ربات از BotFather"
   export CHANNEL_ID="@your_channel"      # ربات باید مدیر کانال باشد
-  python3 price_bot.py
+  python3 price_bot.py --once            # یک بار اجرا (برای گیت‌هاب)
+  python3 price_bot.py                   # همیشه روشن، هر ۱۰ دقیقه
 """
 
 import os
@@ -27,15 +25,25 @@ import requests
 # ---------------- تنظیمات ----------------
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
 CHANNEL_ID = os.environ.get("CHANNEL_ID", "")
-TGJU_API_URL = os.environ.get("TGJU_API_URL", "http://localhost:8080")
 
 INTERVAL_SECONDS = 600          # هر ۱۰ دقیقه (فقط در حالت سرور)
 
+# فید زنده‌ی tgju؛ آدرس دوم نسخه‌ی کمکی (آینه) همان فید است
+FEED_URLS = [
+    "https://call1.tgju.org/ajax.json",
+    "https://call3.tgju.org/ajax.json",
+]
+HEADERS = {
+    "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                   "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"),
+    "Accept": "application/json",
+    "Referer": "https://www.tgju.org/",
+}
+
 # (نام نمایشی، کلید tgju)
-# کلیدهای دلار، یورو، طلای ۱۸ و ۲۴ عیار، نقره ۹۲۵ و سکه در مستندات پروژه آمده‌اند.
-# کلید پوند و درهم را حدس زده‌ام؛ اگر پیدا نشدند ربات فقط از آن‌ها می‌گذرد
-# و در خروجی برنامه اسمشان را می‌نویسد. فهرست همه کلیدها:
-#   curl http://localhost:8080/v1/snapshot
+# کلید دلار، یورو، درهم، طلای ۱۸ عیار و سکه امامی در منابع تأیید شده‌اند.
+# کلید پوند، طلای ۲۴ و نقره را حدس زده‌ام؛ اگر در فید نبودند فقط از آن‌ها می‌گذرد
+# و در گزارش اجرا اسمشان را می‌نویسد.
 ITEMS = [
     ("دلار آمریکا", "price_dollar_rl"),
     ("یورو", "price_eur"),
@@ -43,44 +51,66 @@ ITEMS = [
     ("درهم امارات", "price_aed"),
     ("طلای ۱۸ عیار (هر گرم)", "geram18"),
     ("طلای ۲۴ عیار (هر گرم)", "geram24"),
-    ("سکه", "sekee"),
+    ("سکه امامی", "sekee"),
     ("نقره ۹۲۵ (هر گرم)", "silver_925"),
 ]
 
-
-# ---------------- دریافت قیمت‌ها ----------------
-def fetch_prices():
-    """
-    برای هر کلید یک درخواست به سرویس می‌زند.
-    قیمت‌های tgju به ریال هستند؛ اینجا به تومان تبدیل می‌شوند.
-    خروجی: {کلید: (قیمت به تومان، جهت تغییر)}
-    """
-    result = {}
-    for _title, key in ITEMS:
-        try:
-            resp = requests.get(f"{TGJU_API_URL}/v1/items/{key}", timeout=15)
-            if resp.status_code == 404:
-                print(f"کلید پیدا نشد (از آن گذشتم): {key}")
-                continue
-            resp.raise_for_status()
-            item = resp.json()
-            toman = item["price"]["value"] / 10
-            direction = item.get("change", {}).get("status", "")
-            result[key] = (toman, direction)
-        except Exception as e:
-            print(f"خطا در گرفتن {key}: {e}")
-    return result
-
-
-# ---------------- ساخت متن پیام ----------------
 PERSIAN_DIGITS = str.maketrans("0123456789", "۰۱۲۳۴۵۶۷۸۹")
 
 
-def fa(number):
-    """عدد را با جداکننده هزارگان و رقم فارسی برمی‌گرداند."""
-    return f"{int(number):,}".replace(",", "٬").translate(PERSIAN_DIGITS)
+# ---------------- دریافت قیمت‌ها ----------------
+def load_feed():
+    """فید زنده‌ی tgju را می‌گیرد. هر بار یک پارامتر تصادفی می‌فرستیم
+    تا نسخه‌ی کهنه‌ی ذخیره‌شده (کش) تحویل ندهند."""
+    for url in FEED_URLS:
+        try:
+            resp = requests.get(
+                url,
+                params={"rnd": str(time.time_ns())},
+                headers=HEADERS,
+                timeout=20,
+            )
+            resp.raise_for_status()
+            current = resp.json().get("current")
+            if current:
+                return current
+            print(f"فید خالی بود: {url}")
+        except Exception as e:
+            print(f"خطا در گرفتن {url}: {e}")
+    return None
 
 
+def to_number(value):
+    """عدد را از متن (احتمالاً با کاما یا رقم فارسی) درمی‌آورد."""
+    text = str(value).translate(str.maketrans("۰۱۲۳۴۵۶۷۸۹٬،", "0123456789,,"))
+    return float(text.replace(",", "").strip())
+
+
+def fetch_prices():
+    """
+    خروجی: {کلید: (قیمت به تومان، جهت تغییر)}
+    قیمت‌های tgju به ریال هستند و اینجا به تومان تبدیل می‌شوند.
+    """
+    current = load_feed()
+    if not current:
+        return {}
+
+    result = {}
+    for _title, key in ITEMS:
+        entry = current.get(key)
+        if not entry:
+            print(f"کلید در فید نبود (از آن گذشتم): {key}")
+            continue
+        try:
+            toman = to_number(entry["p"]) / 10
+            direction = entry.get("dt", "")
+            result[key] = (toman, direction)
+        except Exception as e:
+            print(f"قیمت {key} خوانده نشد: {e} | داده: {entry}")
+    return result
+
+
+# ---------------- تاریخ شمسی و وقت تهران ----------------
 # نام روزهای هفته؛ ترتیب پایتون: دوشنبه = ۰ ... یکشنبه = ۶
 WEEKDAYS = ["دوشنبه", "سه‌شنبه", "چهارشنبه", "پنجشنبه", "جمعه", "شنبه", "یکشنبه"]
 
@@ -124,6 +154,12 @@ def jalali_stamp():
     day_name = WEEKDAYS[t.weekday()]
     text = f"{jy}/{jm:02d}/{jd:02d}  {t.hour:02d}:{t.minute:02d}"
     return f"{day_name} " + text.translate(PERSIAN_DIGITS)
+
+
+# ---------------- ساخت متن پیام ----------------
+def fa(number):
+    """عدد را با جداکننده هزارگان و رقم فارسی برمی‌گرداند."""
+    return f"{int(number):,}".replace(",", "٬").translate(PERSIAN_DIGITS)
 
 
 def build_message(prices):
