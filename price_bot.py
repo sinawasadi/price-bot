@@ -26,6 +26,9 @@ import requests
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
 CHANNEL_ID = os.environ.get("CHANNEL_ID", "")
 
+# آیدی کانال که در پایان هر پیام نوشته می‌شود
+CHANNEL_TAG = "@HyperEcon"
+
 INTERVAL_SECONDS = 600          # هر ۱۰ دقیقه (فقط در حالت سرور)
 
 # فید زنده‌ی tgju؛ آدرس دوم نسخه‌ی کمکی (آینه) همان فید است
@@ -41,9 +44,8 @@ HEADERS = {
 }
 
 # (نام نمایشی، کلید tgju)
-# کلید دلار، یورو، درهم، طلای ۱۸ عیار و سکه امامی در منابع تأیید شده‌اند.
-# کلید پوند، طلای ۲۴ و نقره را حدس زده‌ام؛ اگر در فید نبودند فقط از آن‌ها می‌گذرد
-# و در گزارش اجرا اسمشان را می‌نویسد.
+# کلید نقره ۹۹۹ را حدس زده‌ام؛ اگر در فید نبود فقط از آن می‌گذرد و در گزارش اجرا
+# اسمش را می‌نویسد، همراه با کلیدهای نقره‌ای که در فید پیدا شده‌اند.
 ITEMS = [
     ("دلار آمریکا", "price_dollar_rl"),
     ("یورو", "price_eur"),
@@ -53,6 +55,7 @@ ITEMS = [
     ("طلای ۲۴ عیار (هر گرم)", "geram24"),
     ("سکه امامی", "sekee"),
     ("نقره ۹۲۵ (هر گرم)", "silver_925"),
+    ("نقره ۹۹۹ (هر گرم)", "silver_999"),
 ]
 
 PERSIAN_DIGITS = str.maketrans("0123456789", "۰۱۲۳۴۵۶۷۸۹")
@@ -100,6 +103,9 @@ def fetch_prices():
         entry = current.get(key)
         if not entry:
             print(f"کلید در فید نبود (از آن گذشتم): {key}")
+            if "silver" in key:
+                found = [k for k in current if "silver" in k.lower()]
+                print("کلیدهای نقره‌ای موجود در فید:", found)
             continue
         try:
             toman = to_number(entry["p"]) / 10
@@ -171,6 +177,7 @@ def build_message(prices):
         arrow = {"high": " 🔺", "low": " 🔻"}.get(direction, "")
         lines.append(f"▫️ {title}: {fa(toman)} تومان{arrow}")
     lines += ["", f"🕒 آخرین بروزرسانی: {jalali_stamp()} (به وقت تهران)"]
+    lines += ["", CHANNEL_TAG]
     return "\n".join(lines)
 
 
