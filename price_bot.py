@@ -5,7 +5,7 @@
 
 طرز کار:
   1) یک سرویس کوچک (tgju-api-go) قیمت‌ها را از سایت tgju می‌خواند و به شکل JSON می‌دهد.
-  2) این اسکریپت از آن سرویس قیمت می‌گیرد و پیام ثابت کانال را ویرایش می‌کند.
+  2) این اسکریپت از آن سرویس قیمت می‌گیرد و هر بار یک پیام جدید در کانال می‌فرستد.
 
 اجرای سرویس قیمت (یک بار):
   docker run -d --restart always -p 8080:8080 ghcr.io/amiranmanesh/tgju-api-go:latest
@@ -19,7 +19,6 @@
 
 import os
 import sys
-import json
 import time
 from datetime import datetime, timedelta, timezone
 
@@ -30,8 +29,7 @@ BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
 CHANNEL_ID = os.environ.get("CHANNEL_ID", "")
 TGJU_API_URL = os.environ.get("TGJU_API_URL", "http://localhost:8080")
 
-INTERVAL_SECONDS = 300          # هر ۵ دقیقه
-STATE_FILE = "state.json"
+INTERVAL_SECONDS = 600          # هر ۱۰ دقیقه (فقط در حالت سرور)
 
 # (نام نمایشی، کلید tgju)
 # کلیدهای دلار، یورو، طلای ۱۸ و ۲۴ عیار، نقره ۹۲۵ و سکه در مستندات پروژه آمده‌اند.
@@ -83,6 +81,10 @@ def fa(number):
     return f"{int(number):,}".replace(",", "٬").translate(PERSIAN_DIGITS)
 
 
+# نام روزهای هفته؛ ترتیب پایتون: دوشنبه = ۰ ... یکشنبه = ۶
+WEEKDAYS = ["دوشنبه", "سه‌شنبه", "چهارشنبه", "پنجشنبه", "جمعه", "شنبه", "یکشنبه"]
+
+
 def tehran_now():
     """وقت فعلی به وقت تهران."""
     try:
@@ -116,11 +118,12 @@ def gregorian_to_jalali(gy, gm, gd):
 
 
 def jalali_stamp():
-    """مثل: ۱۴۰۵/۰۷/۲۶  ۱۵:۴۱ (به وقت تهران)"""
+    """مثل: یکشنبه ۱۴۰۵/۰۷/۲۶  ۱۵:۴۱"""
     t = tehran_now()
     jy, jm, jd = gregorian_to_jalali(t.year, t.month, t.day)
+    day_name = WEEKDAYS[t.weekday()]
     text = f"{jy}/{jm:02d}/{jd:02d}  {t.hour:02d}:{t.minute:02d}"
-    return text.translate(PERSIAN_DIGITS)
+    return f"{day_name} " + text.translate(PERSIAN_DIGITS)
 
 
 def build_message(prices):
@@ -141,51 +144,23 @@ def tg(method, payload):
     return requests.post(url, json=payload, timeout=15).json()
 
 
-def load_state():
-    if os.path.exists(STATE_FILE):
-        with open(STATE_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    return {}
-
-
-def save_state(state):
-    with open(STATE_FILE, "w", encoding="utf-8") as f:
-        json.dump(state, f)
-
-
 def publish(text):
-    state = load_state()
-    message_id = state.get("message_id")
-
-    if message_id:
-        result = tg("editMessageText", {
-            "chat_id": CHANNEL_ID,
-            "message_id": message_id,
-            "text": text,
-        })
-        if result.get("ok"):
-            return
-        if "message is not modified" in str(result.get("description", "")):
-            return
-        print("ویرایش ناموفق بود:", result)
-
+    """هر بار یک پیام جدید در کانال می‌فرستد. اگر موفق بود True برمی‌گرداند."""
     result = tg("sendMessage", {"chat_id": CHANNEL_ID, "text": text})
     if result.get("ok"):
-        state["message_id"] = result["result"]["message_id"]
-        save_state(state)
-    else:
-        print("ارسال ناموفق بود:", result)
+        return True
+    print("ارسال ناموفق بود:", result)
+    return False
 
 
 # ---------------- اجرا ----------------
 def run_once():
-    """یک بار قیمت می‌گیرد و پیام کانال را بروز می‌کند. اگر قیمتی نیامد False برمی‌گرداند."""
+    """یک بار قیمت می‌گیرد و یک پیام جدید در کانال می‌فرستد."""
     prices = fetch_prices()
     if not prices:
-        print("هیچ قیمتی دریافت نشد؛ پیام کانال تغییر نکرد.")
+        print("هیچ قیمتی دریافت نشد؛ پیامی ارسال نشد.")
         return False
-    publish(build_message(prices))
-    return True
+    return publish(build_message(prices))
 
 
 def main():
