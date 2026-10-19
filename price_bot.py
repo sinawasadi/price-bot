@@ -1,22 +1,26 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-ربات قیمت لحظه‌ای ارز، طلا و نقره برای کانال تلگرام (منبع قیمت: tgju)
+ربات قیمت لحظه‌ای ارز، طلا، سکه و نقره برای کانال تلگرام (منبع قیمت: tgju)
 
-طرز کار:
-  - قیمت‌ها را از فید زنده‌ی خود tgju می‌گیرد (همان فیدی که سایت برای بروزرسانی لحظه‌ای استفاده می‌کند).
-  - هر بار یک پیام جدید در کانال می‌فرستد.
+هر بار دو پیام می‌سازد:
+  ۱) قیمت ارزها
+  ۲) قیمت طلا، سکه (با حباب) و نقره
+
+اگر قیمت‌های یک پیام نسبت به آخرین پیام ارسال‌شده تغییری نکرده باشد،
+پیام تازه نمی‌فرستد و فقط «آخرین بروزرسانی» همان پیام قبلی را ویرایش می‌کند.
 
 اجرا:
   pip install requests
   export BOT_TOKEN="توکن ربات از BotFather"
   export CHANNEL_ID="@your_channel"      # ربات باید مدیر کانال باشد
   python3 price_bot.py --once            # یک بار اجرا (برای گیت‌هاب)
-  python3 price_bot.py                   # همیشه روشن، هر ۱۰ دقیقه
+  python3 price_bot.py                   # همیشه روشن، هر ۵ دقیقه
 """
 
 import os
 import sys
+import json
 import time
 from datetime import datetime, timedelta, timezone
 
@@ -29,7 +33,13 @@ CHANNEL_ID = os.environ.get("CHANNEL_ID", "")
 # آیدی کانال که در پایان هر پیام نوشته می‌شود
 CHANNEL_TAG = "@Hypertech_ir"
 
-INTERVAL_SECONDS = 600          # هر ۱۰ دقیقه (فقط در حالت سرور)
+INTERVAL_SECONDS = 300          # فقط در حالت همیشه روشن
+STATE_FILE = "state.json"       # شناسه و قیمت آخرین پیام‌ها اینجا نگه داشته می‌شود
+
+# اموجی جهت تغییر قیمت. اموجی «فلش سبز رو به بالا» وجود ندارد؛
+# نزدیک‌ترین حالت دایره‌ی رنگی کنار فلش است. اگر خواستید اینجا عوضش کنید.
+UP_EMOJI = "🟢⬆️"
+DOWN_EMOJI = "🔴⬇️"
 
 # فید زنده‌ی tgju؛ آدرس دوم نسخه‌ی کمکی (آینه) همان فید است
 FEED_URLS = [
@@ -43,22 +53,45 @@ HEADERS = {
     "Referer": "https://www.tgju.org/",
 }
 
-# (نام نمایشی، کلید tgju)
-# کلید نقره ۹۹۹ را حدس زده‌ام؛ اگر در فید نبود فقط از آن می‌گذرد و در گزارش اجرا
-# اسمش را می‌نویسد، همراه با کلیدهای نقره‌ای که در فید پیدا شده‌اند.
-ITEMS = [
-    ("دلار آمریکا", "price_dollar_rl"),
-    ("یورو", "price_eur"),
-    ("پوند", "price_gbp"),
-    ("درهم امارات", "price_aed"),
-    ("طلای ۱۸ عیار (هر گرم)", "geram18"),
-    ("طلای ۲۴ عیار (هر گرم)", "geram24"),
-    ("سکه امامی", "sekee"),
-    ("نقره ۹۲۵ (هر گرم)", "silver_925"),
-    ("نقره ۹۹۹ (هر گرم)", "silver_999"),
+# ---------- فهرست‌ها: (اموجی، نام نمایشی، کلید tgju) ----------
+CURRENCY_TITLE = "💱 قیمت لحظه‌ای ارز"
+CURRENCY_SECTIONS = [
+    [
+        ("💵", "دلار آمریکا", "price_dollar_rl"),
+        ("💶", "یورو", "price_eur"),
+        ("💷", "پوند", "price_gbp"),
+        ("🇦🇪", "درهم امارات", "price_aed"),
+    ],
+]
+
+GOLD_TITLE = "🥇 قیمت لحظه‌ای طلا، سکه و نقره"
+GOLD_SECTIONS = [
+    [
+        ("🥇", "طلای ۱۸ عیار (هر گرم)", "geram18"),
+        ("🥇", "طلای ۲۴ عیار (هر گرم)", "geram24"),
+    ],
+    [
+        ("🪙", "سکه امامی", "sekee"),
+        ("🫧", "حباب سکه امامی", "coin_blubber"),
+        ("🪙", "سکه بهار آزادی", "sekeb"),
+        ("🫧", "حباب سکه بهار آزادی", "sekeb_blubber"),
+        ("🪙", "نیم‌سکه", "nim"),
+        ("🫧", "حباب نیم‌سکه", "nim_blubber"),
+        ("🪙", "ربع‌سکه", "rob"),
+        ("🫧", "حباب ربع‌سکه", "rob_blubber"),
+    ],
+    [
+        ("🥈", "نقره ۹۲۵ (هر گرم)", "silver_925"),
+        ("🥈", "نقره ۹۹۹ (هر گرم)", "silver_999"),
+    ],
 ]
 
 PERSIAN_DIGITS = str.maketrans("0123456789", "۰۱۲۳۴۵۶۷۸۹")
+
+
+def all_keys():
+    keys = [k for sec in CURRENCY_SECTIONS + GOLD_SECTIONS for (_e, _t, k) in sec]
+    return keys
 
 
 # ---------------- دریافت قیمت‌ها ----------------
@@ -99,20 +132,22 @@ def fetch_prices():
         return {}
 
     result = {}
-    for _title, key in ITEMS:
+    missing = []
+    for key in all_keys():
         entry = current.get(key)
         if not entry:
-            print(f"کلید در فید نبود (از آن گذشتم): {key}")
-            if "silver" in key:
-                found = [k for k in current if "silver" in k.lower()]
-                print("کلیدهای نقره‌ای موجود در فید:", found)
+            missing.append(key)
             continue
         try:
-            toman = to_number(entry["p"]) / 10
-            direction = entry.get("dt", "")
-            result[key] = (toman, direction)
+            result[key] = (to_number(entry["p"]) / 10, entry.get("dt", ""))
         except Exception as e:
             print(f"قیمت {key} خوانده نشد: {e} | داده: {entry}")
+
+    if missing:
+        print("کلیدهای زیر در فید نبودند (از آن‌ها گذشتم):", missing)
+        hints = ("sek", "nim", "rob", "geram", "silver", "gold", "gbp", "aed", "blubber", "bubble")
+        found = sorted(k for k in current if any(h in k.lower() for h in hints))
+        print("کلیدهای مشابه موجود در فید:", found[:80])
     return result
 
 
@@ -162,23 +197,45 @@ def jalali_stamp():
     return f"{day_name} " + text.translate(PERSIAN_DIGITS)
 
 
-# ---------------- ساخت متن پیام ----------------
+# ---------------- ساخت متن پیام‌ها ----------------
 def fa(number):
-    """عدد را با جداکننده هزارگان و رقم فارسی برمی‌گرداند."""
-    return f"{int(number):,}".replace(",", "٬").translate(PERSIAN_DIGITS)
+    """عدد را با جداکننده هزارگان و رقم فارسی برمی‌گرداند (منفی هم پشتیبانی می‌شود)."""
+    sign = "−" if number < 0 else ""
+    text = f"{abs(int(round(number))):,}".replace(",", "٬")
+    return sign + text.translate(PERSIAN_DIGITS)
 
 
-def build_message(prices):
-    lines = ["📊 قیمت لحظه‌ای بازار", ""]
-    for title, key in ITEMS:
-        if key not in prices:
-            continue
-        toman, direction = prices[key]
-        arrow = {"high": " 🔺", "low": " 🔻"}.get(direction, "")
-        lines.append(f"▫️ {title}: {fa(toman)} تومان{arrow}")
-    lines += ["", f"🕒 آخرین بروزرسانی: {jalali_stamp()} (به وقت تهران)"]
-    lines += ["", CHANNEL_TAG]
-    return "\n".join(lines)
+def arrow(direction):
+    if direction == "high":
+        return " " + UP_EMOJI
+    if direction == "low":
+        return " " + DOWN_EMOJI
+    return ""
+
+
+def build_group(title, sections, prices):
+    """متن بدنه‌ی پیام (بدون خط زمان) و امضای قیمت‌ها را برمی‌گرداند.
+    اگر هیچ قیمتی از این گروه نبود، None برمی‌گرداند."""
+    blocks = []
+    signature = {}
+    for section in sections:
+        lines = []
+        for emoji, name, key in section:
+            if key not in prices:
+                continue
+            toman, direction = prices[key]
+            signature[key] = int(round(toman))
+            lines.append(f"{emoji} {name}: {fa(toman)} تومان{arrow(direction)}")
+        if lines:
+            blocks.append("\n".join(lines))
+    if not blocks:
+        return None
+    body = title + "\n\n" + "\n\n".join(blocks)
+    return body, signature
+
+
+def with_footer(body):
+    return f"{body}\n\n🕒 آخرین بروزرسانی: {jalali_stamp()} (به وقت تهران)\n\n{CHANNEL_TAG}"
 
 
 # ---------------- تلگرام ----------------
@@ -187,23 +244,90 @@ def tg(method, payload):
     return requests.post(url, json=payload, timeout=15).json()
 
 
-def publish(text):
-    """هر بار یک پیام جدید در کانال می‌فرستد. اگر موفق بود True برمی‌گرداند."""
+def load_state():
+    if os.path.exists(STATE_FILE):
+        try:
+            with open(STATE_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, dict):
+                    return data
+        except Exception:
+            pass
+    return {}
+
+
+def save_state(state):
+    with open(STATE_FILE, "w", encoding="utf-8") as f:
+        json.dump(state, f, ensure_ascii=False, indent=1, sort_keys=True)
+
+
+def send_new(name, text, signature, state):
     result = tg("sendMessage", {"chat_id": CHANNEL_ID, "text": text})
     if result.get("ok"):
+        state[name] = {"message_id": result["result"]["message_id"], "sig": signature}
         return True
-    print("ارسال ناموفق بود:", result)
+    print(f"ارسال پیام «{name}» ناموفق بود:", result)
     return False
+
+
+def publish_group(name, body, signature, state):
+    """
+    اگر قیمت‌ها با آخرین پیام یکی بود، همان پیام را ویرایش می‌کند (فقط زمان بروزرسانی).
+    وگرنه پیام جدید می‌فرستد.
+    """
+    text = with_footer(body)
+    last = state.get(name) or {}
+    message_id = last.get("message_id")
+
+    if message_id and last.get("sig") == signature:
+        result = tg("editMessageText", {
+            "chat_id": CHANNEL_ID,
+            "message_id": message_id,
+            "text": text,
+        })
+        desc = str(result.get("description", "")).lower()
+        if result.get("ok") or "not modified" in desc:
+            print(f"«{name}»: قیمت‌ها تغییری نکرده؛ فقط زمان بروزرسانی ویرایش شد.")
+            return True
+        if "not found" in desc or "can't be edited" in desc or "message_id_invalid" in desc:
+            print(f"«{name}»: پیام قبلی پیدا نشد؛ پیام جدید می‌فرستم.")
+            return send_new(name, text, signature, state)
+        print(f"ویرایش «{name}» ناموفق بود:", result)
+        return False
+
+    return send_new(name, text, signature, state)
 
 
 # ---------------- اجرا ----------------
 def run_once():
-    """یک بار قیمت می‌گیرد و یک پیام جدید در کانال می‌فرستد."""
     prices = fetch_prices()
     if not prices:
         print("هیچ قیمتی دریافت نشد؛ پیامی ارسال نشد.")
         return False
-    return publish(build_message(prices))
+
+    state = load_state()
+    before = json.dumps(state, sort_keys=True)
+    ok = True
+
+    groups = [
+        ("currency", CURRENCY_TITLE, CURRENCY_SECTIONS),
+        ("gold", GOLD_TITLE, GOLD_SECTIONS),
+    ]
+    for name, title, sections in groups:
+        built = build_group(title, sections, prices)
+        if built is None:
+            print(f"برای «{name}» هیچ قیمتی نبود؛ رد شد.")
+            continue
+        body, signature = built
+        try:
+            ok = publish_group(name, body, signature, state) and ok
+        except Exception as e:
+            print(f"خطا در «{name}»: {e}")
+            ok = False
+
+    if json.dumps(state, sort_keys=True) != before:
+        save_state(state)
+    return ok
 
 
 def main():
