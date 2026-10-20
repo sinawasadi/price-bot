@@ -9,7 +9,7 @@
   }
  },
  "gold": {
-  "message_id": 2837,
+  "message_id": 2838,
   "sig": {
    "coin_blubber": 8898000,
    "geram18": 26449700,
@@ -21,8 +21,8 @@
    "sekeb": 258055000,
    "sekeb_blubber": 813000,
    "sekee": 266130000,
-   "silver_925": 468543,
-   "silver_999": 506530
+   "silver_925": 468509,
+   "silver_999": 506500
   }
  },
  "message_id": 2728
