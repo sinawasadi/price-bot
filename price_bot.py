@@ -1,27 +1,33 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-ربات قیمت لحظه‌ای ارز، طلا، سکه و نقره برای کانال تلگرام (منبع قیمت: tgju)
+ربات کانال قیمت لحظه‌ای ارز، طلا، سکه، نقره و بازار جهانی (منبع قیمت: tgju)
 
-هر بار دو پیام می‌سازد:
+پیام‌های ثابت (بی‌صدا، با ویرایش خودکار اگر قیمت تغییری نکرده):
   ۱) قیمت ارزها
-  ۲) قیمت طلا، سکه (با حباب) و نقره
+  ۲) بازار جهانی: تتر، بیت‌کوین، اونس جهانی طلا
+  ۳) قیمت طلا، سکه (با حباب) و نقره
 
-اگر قیمت‌های یک پیام نسبت به آخرین پیام ارسال‌شده تغییری نکرده باشد،
-پیام تازه نمی‌فرستد و فقط «آخرین بروزرسانی» همان پیام قبلی را ویرایش می‌کند.
+برنامه‌ی روزانه (به وقت تهران):
+  ۲۰:۰۰  نظرسنجی «فردا قیمت … چه می‌شود؟» (نتیجه‌ی آرا نمایش داده نمی‌شود)
+  ۲۱:۰۰  آموزش کوتاه شبانه (از فایل lessons.json)
+  ۲۲:۳۰  جمع‌بندی کمترین و بیشترین قیمت امروز، سپس سکوت تا ۰۱:۰۰ بامداد
 
 اجرا:
   pip install requests
   export BOT_TOKEN="توکن ربات از BotFather"
   export CHANNEL_ID="@your_channel"      # ربات باید مدیر کانال باشد
   python3 price_bot.py --once            # یک بار اجرا (برای گیت‌هاب)
-  python3 price_bot.py --once --summary  # ارسال فوری جمع‌بندی شبانه (فقط برای تست)
+  python3 price_bot.py --once --summary  # ارسال فوری جمع‌بندی (فقط تست)
+  python3 price_bot.py --once --poll     # ارسال فوری نظرسنجی (فقط تست)
+  python3 price_bot.py --once --lesson   # ارسال فوری آموزش بعدی (فقط تست)
   python3 price_bot.py                   # همیشه روشن، هر ۵ دقیقه
 """
 
 import os
 import sys
 import json
+import math
 import time
 from datetime import datetime, timedelta, timezone
 
@@ -35,15 +41,17 @@ CHANNEL_ID = os.environ.get("CHANNEL_ID", "")
 CHANNEL_TAG = "@Hypertech_ir"
 
 INTERVAL_SECONDS = 300          # فقط در حالت همیشه روشن
+STATE_FILE = "state.json"       # شناسه‌ی پیام‌ها و وضعیت برنامه‌ی روزانه اینجا نگه داشته می‌شود
+LESSONS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "lessons.json")
 
-# جمع‌بندی شبانه: از این ساعت (به وقت تهران) یک پیام جمع‌بندی می‌رود و تا ساعت پایان سکوت
-# هیچ پیام قیمتی ارسال یا ویرایش نمی‌شود.
-SUMMARY_MINUTE = 22 * 60 + 30   # ۲۲:۳۰
-QUIET_END_MINUTE = 1 * 60       # ۰۱:۰۰ بامداد
-STATE_FILE = "state.json"       # شناسه و قیمت آخرین پیام‌ها اینجا نگه داشته می‌شود
+# ساعت‌ها به وقت تهران (دقیقه از نیمه‌شب)
+POLL_MINUTE = 20 * 60           # ۲۰:۰۰ نظرسنجی روزانه
+LESSON_MINUTE = 21 * 60         # ۲۱:۰۰ آموزش شبانه
+SUMMARY_MINUTE = 22 * 60 + 30   # ۲۲:۳۰ جمع‌بندی و شروع سکوت
+QUIET_END_MINUTE = 1 * 60       # ۰۱:۰۰ پایان سکوت
 
 # اموجی جهت تغییر قیمت. اموجی «فلش سبز رو به بالا» وجود ندارد؛
-# نزدیک‌ترین حالت دایره‌ی رنگی کنار فلش است. اگر خواستید اینجا عوضش کنید.
+# نزدیک‌ترین حالت دایره‌ی رنگی کنار فلش است.
 UP_EMOJI = "🟢⬆️"
 DOWN_EMOJI = "🔴⬇️"
 
@@ -70,6 +78,26 @@ CURRENCY_SECTIONS = [
     ],
 ]
 
+GLOBAL_TITLE = "🌍 بازار جهانی و ارز دیجیتال"
+GLOBAL_SECTIONS = [
+    [
+        ("💲", "تتر", "crypto-tether"),
+        ("₿", "بیت‌کوین", "crypto-bitcoin"),
+    ],
+    [
+        ("🌍", "اونس جهانی طلا", "ons"),
+    ],
+]
+# واحد قیمت این کلیدها را از روی اندازه‌ی عدد تشخیص می‌دهیم:
+#   usd  = معمولاً به دلار؛ اگر عدد غیرممکن (بسیار بزرگ) بود یعنی ریال است و به تومان تبدیل می‌شود
+#   auto = تتر؛ عدد کوچک (حدود ۱) یعنی دلار، عدد بزرگ یعنی ریال
+# عدد دوم: تعداد رقم اعشار نمایش (برای دلار)
+GLOBAL_META = {
+    "crypto-tether": ("auto", 4),
+    "crypto-bitcoin": ("usd", 0),
+    "ons": ("usd", 2),
+}
+
 GOLD_TITLE = "🥇 قیمت لحظه‌ای طلا، سکه و نقره"
 GOLD_SECTIONS = [
     [
@@ -92,9 +120,6 @@ GOLD_SECTIONS = [
     ],
 ]
 
-PERSIAN_DIGITS = str.maketrans("0123456789", "۰۱۲۳۴۵۶۷۸۹")
-
-
 # آیتم‌های جمع‌بندی شبانه: (اموجی، نام نمایشی، کلید tgju)
 SUMMARY_TITLE = "📊 جمع‌بندی بازار امروز"
 SUMMARY_ITEMS = [
@@ -106,10 +131,16 @@ SUMMARY_ITEMS = [
     ("🪙", "سکه بهار آزادی", "sekeb"),
 ]
 
+# نظرسنجی روزانه: هر روز یک مورد از این فهرست (به ترتیب، دوباره از اول)
+POLL_ASSETS = ["دلار", "طلای ۱۸ عیار", "سکه امامی", "تتر", "بیت‌کوین", "اونس جهانی طلا"]
+POLL_OPTIONS = ["📈 بالاتر می‌ره", "📉 پایین‌تر میاد", "➖ تقریباً ثابت می‌مونه"]
+
+PERSIAN_DIGITS = str.maketrans("0123456789", "۰۱۲۳۴۵۶۷۸۹")
+
 
 def all_keys():
-    keys = [k for sec in CURRENCY_SECTIONS + GOLD_SECTIONS for (_e, _t, k) in sec]
-    return keys
+    sections = CURRENCY_SECTIONS + GLOBAL_SECTIONS + GOLD_SECTIONS
+    return [k for sec in sections for (_e, _t, k) in sec]
 
 
 # ---------------- دریافت قیمت‌ها ----------------
@@ -140,12 +171,36 @@ def to_number(value):
     return float(text.replace(",", "").strip())
 
 
+def parse_item(key, entry):
+    """
+    یک آیتم فید را به دیکشنری تبدیل می‌کند:
+      v: مقدار | unit: toman یا usd | dec: رقم اعشار | dir: high/low/"" | pct: درصد تغییر روزانه یا None
+    قیمت‌های ریالی tgju به تومان تبدیل می‌شوند.
+    """
+    raw = to_number(entry["p"])
+    kind, dec = GLOBAL_META.get(key, ("rial", 0))
+    if kind == "rial":
+        value, unit = raw / 10, "toman"
+    elif kind == "usd":
+        value, unit = (raw / 10, "toman") if raw > 50_000_000 else (raw, "usd")
+    else:  # auto
+        value, unit = (raw / 10, "toman") if raw >= 1000 else (raw, "usd")
+
+    direction = entry.get("dt", "")
+    pct = None
+    if "blubber" not in key:                      # درصد تغییر حباب معنی‌دار نیست
+        try:
+            dp = to_number(entry["dp"])
+            pct = abs(dp)
+            if direction not in ("high", "low"):
+                direction = "high" if dp > 0 else "low" if dp < 0 else ""
+        except Exception:
+            pct = None
+    return {"v": value, "unit": unit, "dec": dec, "dir": direction, "pct": pct}
+
+
 def fetch_prices(current=None):
-    """
-    خروجی: {کلید: (قیمت به تومان، جهت تغییر)}
-    قیمت‌های tgju به ریال هستند و اینجا به تومان تبدیل می‌شوند.
-    اگر فید داده نشود، خودش می‌گیرد.
-    """
+    """خروجی: {کلید: دیکشنری آیتم}. اگر فید داده نشود، خودش می‌گیرد."""
     if current is None:
         current = load_feed()
     if not current:
@@ -159,13 +214,14 @@ def fetch_prices(current=None):
             missing.append(key)
             continue
         try:
-            result[key] = (to_number(entry["p"]) / 10, entry.get("dt", ""))
+            result[key] = parse_item(key, entry)
         except Exception as e:
             print(f"قیمت {key} خوانده نشد: {e} | داده: {entry}")
 
     if missing:
         print("کلیدهای زیر در فید نبودند (از آن‌ها گذشتم):", missing)
-        hints = ("sek", "nim", "rob", "geram", "silver", "gold", "gbp", "aed", "blubber", "bubble")
+        hints = ("sek", "nim", "rob", "geram", "silver", "gold", "gbp", "aed",
+                 "blubber", "bubble", "crypto", "tether", "bitcoin", "ons")
         found = sorted(k for k in current if any(h in k.lower() for h in hints))
         print("کلیدهای مشابه موجود در فید:", found[:80])
     return result
@@ -217,20 +273,50 @@ def jalali_stamp():
     return f"{day_name} " + text.translate(PERSIAN_DIGITS)
 
 
+def jalali_date_key(t):
+    """کلید روز شمسی برای ذخیره در state، مثل 1405/07/26"""
+    jy, jm, jd = gregorian_to_jalali(t.year, t.month, t.day)
+    return f"{jy}/{jm:02d}/{jd:02d}"
+
+
 # ---------------- ساخت متن پیام‌ها ----------------
 def fa(number):
-    """عدد را با جداکننده هزارگان و رقم فارسی برمی‌گرداند (منفی هم پشتیبانی می‌شود)."""
-    sign = "−" if number < 0 else ""
-    text = f"{abs(int(round(number))):,}".replace(",", "٬")
-    return sign + text.translate(PERSIAN_DIGITS)
+    """عدد صحیح با جداکننده‌ی هزارگان و رقم فارسی."""
+    return f"{int(round(number)):,}".replace(",", "٬").translate(PERSIAN_DIGITS)
 
 
-def arrow(direction):
-    if direction == "high":
-        return " " + UP_EMOJI
-    if direction == "low":
-        return " " + DOWN_EMOJI
-    return ""
+def fa_dec(number, decimals):
+    """عدد اعشاری با جداکننده‌ی هزارگان و رقم فارسی."""
+    text = f"{number:,.{decimals}f}".replace(",", "٬").replace(".", "٫")
+    return text.translate(PERSIAN_DIGITS)
+
+
+def arrow_and_percent(item):
+    parts = []
+    if item["dir"] == "high":
+        parts.append(UP_EMOJI)
+    elif item["dir"] == "low":
+        parts.append(DOWN_EMOJI)
+    if item["pct"] is not None and (item["pct"] > 0 or parts):
+        parts.append(fa_dec(item["pct"], 2) + "٪")
+    return (" " + " ".join(parts)) if parts else ""
+
+
+def value_text(item):
+    if item["unit"] == "toman":
+        return f"{fa(item['v'])} تومان"
+    return f"{fa_dec(item['v'], item['dec'])} دلار"
+
+
+def signature_value(item):
+    """مقداری که برای تشخیص «تغییر نکرده» مقایسه می‌شود.
+    قیمت‌های دلاری پرنوسان (بیت‌کوین و ...) با سه رقم معنی‌دار مقایسه می‌شوند
+    تا هر تکان کوچک پیام جدید نسازد."""
+    v = item["v"]
+    if item["unit"] == "toman" or v <= 0:
+        return int(round(v))
+    step = 10 ** (math.floor(math.log10(v)) - 2)
+    return int(round(v / step))
 
 
 def build_group(title, sections, prices):
@@ -241,11 +327,11 @@ def build_group(title, sections, prices):
     for section in sections:
         lines = []
         for emoji, name, key in section:
-            if key not in prices:
+            item = prices.get(key)
+            if item is None:
                 continue
-            toman, direction = prices[key]
-            signature[key] = int(round(toman))
-            lines.append(f"{emoji} {name}: {fa(toman)} تومان{arrow(direction)}")
+            signature[key] = signature_value(item)
+            lines.append(f"{emoji} {name}: {value_text(item)}{arrow_and_percent(item)}")
         if lines:
             blocks.append("\n".join(lines))
     if not blocks:
@@ -258,7 +344,7 @@ def with_footer(body):
     return f"{body}\n\n🕒 آخرین بروزرسانی: {jalali_stamp()} (به وقت تهران)\n\n{CHANNEL_TAG}"
 
 
-# ---------------- تلگرام ----------------
+# ---------------- تلگرام و وضعیت ----------------
 def tg(method, payload):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/{method}"
     return requests.post(url, json=payload, timeout=15).json()
@@ -281,8 +367,12 @@ def save_state(state):
         json.dump(state, f, ensure_ascii=False, indent=1, sort_keys=True)
 
 
-def send_new(name, text, signature, state):
-    result = tg("sendMessage", {"chat_id": CHANNEL_ID, "text": text})
+def send_new(name, text, signature, state, silent=True):
+    """پیام جدید (بی‌صدا) می‌فرستد و شناسه‌اش را برای ویرایش‌های بعدی نگه می‌دارد."""
+    payload = {"chat_id": CHANNEL_ID, "text": text}
+    if silent:
+        payload["disable_notification"] = True
+    result = tg("sendMessage", payload)
     if result.get("ok"):
         state[name] = {"message_id": result["result"]["message_id"], "sig": signature}
         return True
@@ -293,7 +383,7 @@ def send_new(name, text, signature, state):
 def publish_group(name, body, signature, state):
     """
     اگر قیمت‌ها با آخرین پیام یکی بود، همان پیام را ویرایش می‌کند (فقط زمان بروزرسانی).
-    وگرنه پیام جدید می‌فرستد.
+    وگرنه پیام جدید (بی‌صدا) می‌فرستد.
     """
     text = with_footer(body)
     last = state.get(name) or {}
@@ -319,12 +409,6 @@ def publish_group(name, body, signature, state):
 
 
 # ---------------- جمع‌بندی شبانه ----------------
-def jalali_date_key(t):
-    """کلید روز شمسی برای ذخیره در state، مثل 1405/07/26"""
-    jy, jm, jd = gregorian_to_jalali(t.year, t.month, t.day)
-    return f"{jy}/{jm:02d}/{jd:02d}"
-
-
 def build_summary(current, t):
     """
     متن جمع‌بندی: کمترین و بیشترین قیمت امروز هر آیتم، از فیلدهای l و h فید tgju.
@@ -359,7 +443,7 @@ def build_summary(current, t):
 
 
 def send_summary(current, t):
-    """جمع‌بندی را به کانال می‌فرستد. اگر فرستاده شد True برمی‌گرداند."""
+    """جمع‌بندی را (با اعلان) به کانال می‌فرستد. اگر فرستاده شد True برمی‌گرداند."""
     if not current:
         print("فید tgju در دسترس نبود؛ جمع‌بندی ارسال نشد.")
         return False
@@ -375,16 +459,89 @@ def send_summary(current, t):
     return False
 
 
+# ---------------- نظرسنجی و آموزش روزانه ----------------
+def send_poll(state, record=True):
+    """نظرسنجی روزانه. نتیجه‌ی آرا تا زمانی که نظرسنجی بسته نشود نمایش داده نمی‌شود."""
+    idx = state.get("poll_index", 0) % len(POLL_ASSETS)
+    asset = POLL_ASSETS[idx]
+    payload = {
+        "chat_id": CHANNEL_ID,
+        "question": f"📊 پیش‌بینی شما: فردا قیمت {asset} نسبت به امروز چه تغییری می‌کنه؟",
+        "options": [{"text": o} for o in POLL_OPTIONS],
+        "is_anonymous": True,
+        "allows_multiple_answers": False,
+        "hide_results_until_closes": True,
+    }
+    result = tg("sendPoll", payload)
+    if result.get("ok"):
+        print(f"نظرسنجی روزانه ارسال شد ({asset}).")
+        if record:
+            state["poll_index"] = idx + 1
+        return True
+    print("ارسال نظرسنجی ناموفق بود:", result)
+    return False
+
+
+def load_lessons():
+    try:
+        with open(LESSONS_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return [x for x in data if x.get("title") and x.get("body")]
+    except Exception as e:
+        print(f"فایل آموزش‌ها خوانده نشد ({LESSONS_FILE}): {e}")
+        return []
+
+
+def send_lesson(state, record=True):
+    """آموزش شبانه: هر شب مورد بعدی از lessons.json؛ بعد از آخرین، دوباره از اول."""
+    lessons = load_lessons()
+    if not lessons:
+        return True          # فایل نیست؛ خطا حساب نمی‌شود
+    idx = state.get("lesson_index", 0) % len(lessons)
+    lesson = lessons[idx]
+    text = (f"📚 آموزش امشب\n\n{lesson['title']}\n\n{lesson['body']}\n\n"
+            f"⚠️ مطلب آموزشی عمومی است و توصیه‌ی مالی نیست.\n\n{CHANNEL_TAG}")
+    result = tg("sendMessage", {"chat_id": CHANNEL_ID, "text": text})
+    if result.get("ok"):
+        print(f"آموزش شماره‌ی {idx + 1} ارسال شد.")
+        if record:
+            state["lesson_index"] = idx + 1
+        return True
+    print("ارسال آموزش ناموفق بود:", result)
+    return False
+
+
+def send_daily_items(t, minutes, state):
+    """نظرسنجی و آموزش را اگر وقتش رسیده و امروز فرستاده نشده، می‌فرستد."""
+    today = jalali_date_key(t)
+    ok = True
+    if minutes >= POLL_MINUTE and state.get("poll_date") != today:
+        if send_poll(state):
+            state["poll_date"] = today
+        else:
+            ok = False
+    if minutes >= LESSON_MINUTE and state.get("lesson_date") != today:
+        if send_lesson(state):
+            state["lesson_date"] = today
+        else:
+            ok = False
+    return ok
+
+
 # ---------------- اجرا ----------------
-def run_once(force_summary=False):
+def run_once(force=None):
+    """force: None | "summary" | "poll" | "lesson" (ارسال فوری برای تست؛ وضعیت ذخیره نمی‌شود)"""
     t = tehran_now()
     minutes = t.hour * 60 + t.minute
     evening = minutes >= SUMMARY_MINUTE                       # ۲۲:۳۰ تا ۲۳:۵۹
     quiet = evening or minutes < QUIET_END_MINUTE             # ۲۲:۳۰ تا ۰۱:۰۰
 
-    # ارسال فوری جمع‌بندی برای تست (وضعیت ذخیره نمی‌شود، جمع‌بندی واقعی شب هم ارسال می‌شود)
-    if force_summary:
+    if force == "summary":
         return send_summary(load_feed(), t)
+    if force == "poll":
+        return send_poll(load_state(), record=False)
+    if force == "lesson":
+        return send_lesson(load_state(), record=False)
 
     state = load_state()
 
@@ -401,29 +558,37 @@ def run_once(force_summary=False):
         return True
 
     # ---- روال عادی ----
-    prices = fetch_prices()
-    if not prices:
-        print("هیچ قیمتی دریافت نشد؛ پیامی ارسال نشد.")
-        return False
-
     before = json.dumps(state, sort_keys=True)
     ok = True
 
-    groups = [
-        ("currency", CURRENCY_TITLE, CURRENCY_SECTIONS),
-        ("gold", GOLD_TITLE, GOLD_SECTIONS),
-    ]
-    for name, title, sections in groups:
-        built = build_group(title, sections, prices)
-        if built is None:
-            print(f"برای «{name}» هیچ قیمتی نبود؛ رد شد.")
-            continue
-        body, signature = built
-        try:
-            ok = publish_group(name, body, signature, state) and ok
-        except Exception as e:
-            print(f"خطا در «{name}»: {e}")
-            ok = False
+    prices = fetch_prices()
+    if prices:
+        groups = [
+            ("currency", CURRENCY_TITLE, CURRENCY_SECTIONS),
+            ("global", GLOBAL_TITLE, GLOBAL_SECTIONS),
+            ("gold", GOLD_TITLE, GOLD_SECTIONS),
+        ]
+        for name, title, sections in groups:
+            built = build_group(title, sections, prices)
+            if built is None:
+                print(f"برای «{name}» هیچ قیمتی نبود؛ رد شد.")
+                continue
+            body, signature = built
+            try:
+                ok = publish_group(name, body, signature, state) and ok
+            except Exception as e:
+                print(f"خطا در «{name}»: {e}")
+                ok = False
+    else:
+        print("هیچ قیمتی دریافت نشد؛ پیام قیمت ارسال نشد.")
+        ok = False
+
+    # نظرسنجی و آموزش به فید وابسته نیستند
+    try:
+        ok = send_daily_items(t, minutes, state) and ok
+    except Exception as e:
+        print(f"خطا در برنامه‌ی روزانه: {e}")
+        ok = False
 
     if json.dumps(state, sort_keys=True) != before:
         save_state(state)
@@ -434,9 +599,11 @@ def main():
     if not (BOT_TOKEN and CHANNEL_ID):
         raise SystemExit("BOT_TOKEN و CHANNEL_ID را تنظیم کنید.")
 
+    force = next((f[2:] for f in ("--summary", "--poll", "--lesson") if f in sys.argv), None)
+
     # حالت یک‌بار اجرا (برای گیت‌هاب): python3 price_bot.py --once
     if "--once" in sys.argv:
-        sys.exit(0 if run_once(force_summary="--summary" in sys.argv) else 1)
+        sys.exit(0 if run_once(force) else 1)
 
     # حالت همیشه روشن (برای سرور)
     while True:
