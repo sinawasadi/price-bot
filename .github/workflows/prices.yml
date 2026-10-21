@@ -5,10 +5,15 @@ on:
     - cron: "2,7,12,17,22,27,32,37,42,47,52,57 * * * *"
   workflow_dispatch:
     inputs:
-      summary:
-        description: "ارسال فوری جمع‌بندی شبانه (فقط برای تست)"
-        type: boolean
-        default: false
+      test:
+        description: "ارسال فوری برای تست (در حالت معمولی «none» بماند)"
+        type: choice
+        default: none
+        options:
+          - none
+          - summary
+          - poll
+          - lesson
 
 permissions:
   contents: write
@@ -35,7 +40,7 @@ jobs:
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           CHANNEL_ID: ${{ secrets.CHANNEL_ID }}
-        run: python3 price_bot.py --once ${{ inputs.summary && '--summary' || '' }}
+        run: python3 price_bot.py --once ${{ (inputs.test != '' && inputs.test != 'none') && format('--{0}', inputs.test) || '' }}
 
       - name: ذخیره شناسه پیام
         if: always()
