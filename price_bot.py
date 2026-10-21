@@ -15,6 +15,7 @@
   export BOT_TOKEN="توکن ربات از BotFather"
   export CHANNEL_ID="@your_channel"      # ربات باید مدیر کانال باشد
   python3 price_bot.py --once            # یک بار اجرا (برای گیت‌هاب)
+  python3 price_bot.py --once --summary  # ارسال فوری جمع‌بندی شبانه (فقط برای تست)
   python3 price_bot.py                   # همیشه روشن، هر ۵ دقیقه
 """
 
@@ -34,6 +35,11 @@ CHANNEL_ID = os.environ.get("CHANNEL_ID", "")
 CHANNEL_TAG = "@Hypertech_ir"
 
 INTERVAL_SECONDS = 300          # فقط در حالت همیشه روشن
+
+# جمع‌بندی شبانه: از این ساعت (به وقت تهران) یک پیام جمع‌بندی می‌رود و تا ساعت پایان سکوت
+# هیچ پیام قیمتی ارسال یا ویرایش نمی‌شود.
+SUMMARY_MINUTE = 22 * 60 + 30   # ۲۲:۳۰
+QUIET_END_MINUTE = 1 * 60       # ۰۱:۰۰ بامداد
 STATE_FILE = "state.json"       # شناسه و قیمت آخرین پیام‌ها اینجا نگه داشته می‌شود
 
 # اموجی جهت تغییر قیمت. اموجی «فلش سبز رو به بالا» وجود ندارد؛
@@ -89,6 +95,18 @@ GOLD_SECTIONS = [
 PERSIAN_DIGITS = str.maketrans("0123456789", "۰۱۲۳۴۵۶۷۸۹")
 
 
+# آیتم‌های جمع‌بندی شبانه: (اموجی، نام نمایشی، کلید tgju)
+SUMMARY_TITLE = "📊 جمع‌بندی بازار امروز"
+SUMMARY_ITEMS = [
+    ("💵", "دلار آمریکا", "price_dollar_rl"),
+    ("🥇", "طلای ۱۸ عیار (هر گرم)", "geram18"),
+    ("🥈", "نقره ۹۲۵ (هر گرم)", "silver_925"),
+    ("🥈", "نقره ۹۹۹ (هر گرم)", "silver_999"),
+    ("🪙", "سکه امامی", "sekee"),
+    ("🪙", "سکه بهار آزادی", "sekeb"),
+]
+
+
 def all_keys():
     keys = [k for sec in CURRENCY_SECTIONS + GOLD_SECTIONS for (_e, _t, k) in sec]
     return keys
@@ -122,12 +140,14 @@ def to_number(value):
     return float(text.replace(",", "").strip())
 
 
-def fetch_prices():
+def fetch_prices(current=None):
     """
     خروجی: {کلید: (قیمت به تومان، جهت تغییر)}
     قیمت‌های tgju به ریال هستند و اینجا به تومان تبدیل می‌شوند.
+    اگر فید داده نشود، خودش می‌گیرد.
     """
-    current = load_feed()
+    if current is None:
+        current = load_feed()
     if not current:
         return {}
 
@@ -298,14 +318,94 @@ def publish_group(name, body, signature, state):
     return send_new(name, text, signature, state)
 
 
+# ---------------- جمع‌بندی شبانه ----------------
+def jalali_date_key(t):
+    """کلید روز شمسی برای ذخیره در state، مثل 1405/07/26"""
+    jy, jm, jd = gregorian_to_jalali(t.year, t.month, t.day)
+    return f"{jy}/{jm:02d}/{jd:02d}"
+
+
+def build_summary(current, t):
+    """
+    متن جمع‌بندی: کمترین و بیشترین قیمت امروز هر آیتم، از فیلدهای l و h فید tgju.
+    اگر هیچ آیتمی کمترین و بیشترین نداشت None برمی‌گرداند.
+    """
+    blocks = []
+    for emoji, name, key in SUMMARY_ITEMS:
+        entry = current.get(key)
+        if not entry:
+            print(f"جمع‌بندی: کلید {key} در فید نبود.")
+            continue
+        try:
+            low = to_number(entry["l"]) / 10
+            high = to_number(entry["h"]) / 10
+        except Exception as e:
+            print(f"جمع‌بندی: کمترین/بیشترین {key} خوانده نشد: {e} | داده: {entry}")
+            continue
+        if low <= 0 or high < low:
+            print(f"جمع‌بندی: مقدار نامعتبر برای {key}: کمترین={low} بیشترین={high}")
+            continue
+        blocks.append(
+            f"{emoji} {name}\n"
+            f"{DOWN_EMOJI} کمترین: {fa(low)} تومان\n"
+            f"{UP_EMOJI} بیشترین: {fa(high)} تومان"
+        )
+    if not blocks:
+        return None
+    day_name = WEEKDAYS[t.weekday()]
+    date_text = jalali_date_key(t).translate(PERSIAN_DIGITS)
+    header = f"{SUMMARY_TITLE}\n🗓 {day_name} {date_text}"
+    return header + "\n\n" + "\n\n".join(blocks) + f"\n\n{CHANNEL_TAG}"
+
+
+def send_summary(current, t):
+    """جمع‌بندی را به کانال می‌فرستد. اگر فرستاده شد True برمی‌گرداند."""
+    if not current:
+        print("فید tgju در دسترس نبود؛ جمع‌بندی ارسال نشد.")
+        return False
+    text = build_summary(current, t)
+    if text is None:
+        print("هیچ آیتمی برای جمع‌بندی پیدا نشد؛ ارسال نشد.")
+        return False
+    result = tg("sendMessage", {"chat_id": CHANNEL_ID, "text": text})
+    if result.get("ok"):
+        print("جمع‌بندی شبانه ارسال شد.")
+        return True
+    print("ارسال جمع‌بندی ناموفق بود:", result)
+    return False
+
+
 # ---------------- اجرا ----------------
-def run_once():
+def run_once(force_summary=False):
+    t = tehran_now()
+    minutes = t.hour * 60 + t.minute
+    evening = minutes >= SUMMARY_MINUTE                       # ۲۲:۳۰ تا ۲۳:۵۹
+    quiet = evening or minutes < QUIET_END_MINUTE             # ۲۲:۳۰ تا ۰۱:۰۰
+
+    # ارسال فوری جمع‌بندی برای تست (وضعیت ذخیره نمی‌شود، جمع‌بندی واقعی شب هم ارسال می‌شود)
+    if force_summary:
+        return send_summary(load_feed(), t)
+
+    state = load_state()
+
+    # ---- ساعت سکوت: فقط جمع‌بندی (یک بار در روز)، بقیه‌ی پیام‌ها متوقف ----
+    if quiet:
+        today = jalali_date_key(t)
+        if evening and state.get("summary_date") != today:
+            if send_summary(load_feed(), t):
+                state["summary_date"] = today
+                save_state(state)
+                return True
+            return False
+        print("ساعت سکوت (۲۲:۳۰ تا ۰۱:۰۰)؛ پیام قیمت ارسال یا ویرایش نشد.")
+        return True
+
+    # ---- روال عادی ----
     prices = fetch_prices()
     if not prices:
         print("هیچ قیمتی دریافت نشد؛ پیامی ارسال نشد.")
         return False
 
-    state = load_state()
     before = json.dumps(state, sort_keys=True)
     ok = True
 
@@ -336,7 +436,7 @@ def main():
 
     # حالت یک‌بار اجرا (برای گیت‌هاب): python3 price_bot.py --once
     if "--once" in sys.argv:
-        sys.exit(0 if run_once() else 1)
+        sys.exit(0 if run_once(force_summary="--summary" in sys.argv) else 1)
 
     # حالت همیشه روشن (برای سرور)
     while True:
