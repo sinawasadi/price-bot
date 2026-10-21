@@ -1,17 +1,16 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-ربات کانال قیمت لحظه‌ای ارز، طلا، سکه، نقره و بازار جهانی (منبع قیمت: tgju)
+ربات کانال قیمت لحظه‌ای ارز، طلا، سکه و نقره (منبع قیمت: tgju) — نسخه‌ی ۱٫۰
 
 پیام‌های ثابت (بی‌صدا، با ویرایش خودکار اگر قیمت تغییری نکرده):
-  ۱) قیمت ارزها
-  ۲) بازار جهانی: تتر، بیت‌کوین، اونس جهانی طلا
-  ۳) قیمت طلا، سکه (با حباب) و نقره
+  ۱) قیمت ارزها (دلار، یورو، پوند، درهم، لیر ترکیه) + بیت‌کوین و اونس جهانی طلا
+  ۲) قیمت طلا، سکه (با حباب) و نقره
 
 برنامه‌ی روزانه (به وقت تهران):
   ۲۱:۰۰  آموزش کوتاه شبانه (از فایل lessons.json)
-  ۲۲:۰۰  نظرسنجی «فردا قیمت … چه می‌شود؟» (نتیجه‌ی آرا نمایش داده نمی‌شود)
-  ۲۲:۳۰  جمع‌بندی کمترین و بیشترین قیمت امروز، سپس سکوت تا ۰۱:۰۰ بامداد
+  ۲۲:۳۰  جمع‌بندی کمترین و بیشترین قیمت امروز، بلافاصله بعدش نظرسنجی (آخرین پیام شب)،
+         سپس سکوت تا ۰۱:۰۰ بامداد. اگر نظرسنجی در این بازه نرفت، اولین فرصت بعد از ۰۱:۰۰ می‌رود.
 
 اجرا:
   pip install requests
@@ -44,11 +43,17 @@ INTERVAL_SECONDS = 300          # فقط در حالت همیشه روشن
 STATE_FILE = "state.json"       # شناسه‌ی پیام‌ها و وضعیت برنامه‌ی روزانه اینجا نگه داشته می‌شود
 LESSONS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "lessons.json")
 
+BOT_VERSION = "1.0"
+
 # ساعت‌ها به وقت تهران (دقیقه از نیمه‌شب)
-POLL_MINUTE = 22 * 60           # ۲۲:۰۰ نظرسنجی روزانه (قبل از شروع سکوت ۲۲:۳۰)
 LESSON_MINUTE = 21 * 60         # ۲۱:۰۰ آموزش شبانه
-SUMMARY_MINUTE = 22 * 60 + 30   # ۲۲:۳۰ جمع‌بندی و شروع سکوت
+SUMMARY_MINUTE = 22 * 60 + 30   # ۲۲:۳۰ جمع‌بندی، بعدش نظرسنجی، و شروع سکوت
 QUIET_END_MINUTE = 1 * 60       # ۰۱:۰۰ پایان سکوت
+POLL_FALLBACK_END_MINUTE = 10 * 60   # اگر نظرسنجی شب از دست رفت، تا ساعت ۱۰ صبح فردا هنوز فرستاده می‌شود
+
+# تغییر قیمت این کلیدها به‌تنهایی پیام جدید نمی‌سازد؛ فقط پیام قبلی ویرایش می‌شود
+# (نقره و بازار جهانی پرنوسان‌اند). اگر قیمت بقیه‌ی آیتم‌ها تغییر کند، پیام جدید می‌رود.
+EDIT_ONLY_KEYS = {"silver_925", "silver_999", "crypto-bitcoin", "ons"}
 
 # اموجی جهت تغییر قیمت. اموجی «فلش سبز رو به بالا» وجود ندارد؛
 # نزدیک‌ترین حالت دایره‌ی رنگی کنار فلش است.
@@ -75,25 +80,17 @@ CURRENCY_SECTIONS = [
         ("💶", "یورو", "price_eur"),
         ("💷", "پوند", "price_gbp"),
         ("🇦🇪", "درهم امارات", "price_aed"),
+        ("🇹🇷", "لیر ترکیه", "price_try"),
     ],
-]
-
-GLOBAL_TITLE = "🌍 بازار جهانی و ارز دیجیتال"
-GLOBAL_SECTIONS = [
     [
-        ("💲", "تتر", "crypto-tether"),
         ("₿", "بیت‌کوین", "crypto-bitcoin"),
-    ],
-    [
         ("🌍", "اونس جهانی طلا", "ons"),
     ],
 ]
 # واحد قیمت این کلیدها را از روی اندازه‌ی عدد تشخیص می‌دهیم:
-#   usd  = معمولاً به دلار؛ اگر عدد غیرممکن (بسیار بزرگ) بود یعنی ریال است و به تومان تبدیل می‌شود
-#   auto = تتر؛ عدد کوچک (حدود ۱) یعنی دلار، عدد بزرگ یعنی ریال
+#   usd = معمولاً به دلار؛ اگر عدد غیرممکن (بسیار بزرگ) بود یعنی ریال است و به تومان تبدیل می‌شود
 # عدد دوم: تعداد رقم اعشار نمایش (برای دلار)
 GLOBAL_META = {
-    "crypto-tether": ("auto", 4),
     "crypto-bitcoin": ("usd", 0),
     "ons": ("usd", 2),
 }
@@ -132,14 +129,14 @@ SUMMARY_ITEMS = [
 ]
 
 # نظرسنجی روزانه: هر روز یک مورد از این فهرست (به ترتیب، دوباره از اول)
-POLL_ASSETS = ["دلار", "طلای ۱۸ عیار", "سکه امامی", "تتر", "بیت‌کوین", "اونس جهانی طلا"]
+POLL_ASSETS = ["دلار", "طلای ۱۸ عیار", "سکه امامی", "بیت‌کوین", "اونس جهانی طلا"]
 POLL_OPTIONS = ["📈 بالاتر می‌ره", "📉 پایین‌تر میاد", "➖ تقریباً ثابت می‌مونه"]
 
 PERSIAN_DIGITS = str.maketrans("0123456789", "۰۱۲۳۴۵۶۷۸۹")
 
 
 def all_keys():
-    sections = CURRENCY_SECTIONS + GLOBAL_SECTIONS + GOLD_SECTIONS
+    sections = CURRENCY_SECTIONS + GOLD_SECTIONS
     return [k for sec in sections for (_e, _t, k) in sec]
 
 
@@ -330,7 +327,8 @@ def build_group(title, sections, prices):
             item = prices.get(key)
             if item is None:
                 continue
-            signature[key] = signature_value(item)
+            if key not in EDIT_ONLY_KEYS:
+                signature[key] = signature_value(item)
             lines.append(f"{emoji} {name}: {value_text(item)}{arrow_and_percent(item)}")
         if lines:
             blocks.append("\n".join(lines))
@@ -466,7 +464,7 @@ def send_poll(state, record=True):
     asset = POLL_ASSETS[idx]
     payload = {
         "chat_id": CHANNEL_ID,
-        "question": f"📊 پیش‌بینی شما: فردا قیمت {asset} نسبت به امروز چه تغییری می‌کنه؟",
+        "question": f"📊 پیش‌بینی شما: قیمت {asset} در ۲۴ ساعت آینده چه تغییری می‌کنه؟",
         "options": [{"text": o} for o in POLL_OPTIONS],
         "is_anonymous": True,
         "allows_multiple_answers": False,
@@ -512,20 +510,40 @@ def send_lesson(state, record=True):
 
 
 def send_daily_items(t, minutes, state):
-    """نظرسنجی و آموزش را اگر وقتش رسیده و امروز فرستاده نشده، می‌فرستد."""
+    """آموزش شبانه را اگر وقتش رسیده و امروز فرستاده نشده، می‌فرستد."""
     today = jalali_date_key(t)
-    ok = True
-    if minutes >= POLL_MINUTE and state.get("poll_date") != today:
-        if send_poll(state):
-            state["poll_date"] = today
-        else:
-            ok = False
     if minutes >= LESSON_MINUTE and state.get("lesson_date") != today:
         if send_lesson(state):
             state["lesson_date"] = today
-        else:
-            ok = False
-    return ok
+            return True
+        return False
+    return True
+
+
+def poll_slot_date(t, minutes):
+    """نظرسنجی کدام روز را پوشش می‌دهد: از ۲۲:۳۰ همان روز تا ۱۰ صبحِ فردا. بیرون از این بازه None."""
+    if minutes >= SUMMARY_MINUTE:
+        return jalali_date_key(t)
+    if minutes < POLL_FALLBACK_END_MINUTE:
+        return jalali_date_key(t - timedelta(days=1))
+    return None
+
+
+def maybe_send_poll(t, minutes, state, wait_for_summary):
+    """
+    نظرسنجی روزانه را (با اعلان) می‌فرستد، اگر برای این «شب» هنوز فرستاده نشده.
+    در ساعت سکوت منتظر می‌ماند تا جمع‌بندی رفته باشد (تا نظرسنجی آخرین پیام شب باشد).
+    بعد از ۰۱:۰۰ اگر هنوز نرفته بود، همان لحظه می‌فرستد تا از دست نرود.
+    """
+    slot = poll_slot_date(t, minutes)
+    if slot is None or state.get("poll_date") == slot:
+        return True
+    if wait_for_summary and state.get("summary_date") != slot:
+        return True
+    if send_poll(state):
+        state["poll_date"] = slot
+        return True
+    return False
 
 
 # ---------------- اجرا ----------------
@@ -545,17 +563,27 @@ def run_once(force=None):
 
     state = load_state()
 
-    # ---- ساعت سکوت: فقط جمع‌بندی (یک بار در روز)، بقیه‌ی پیام‌ها متوقف ----
+    # ---- ساعت سکوت: جمع‌بندی، بعدش نظرسنجی (آخرین پیام شب)؛ بقیه‌ی پیام‌ها متوقف ----
     if quiet:
+        before_q = json.dumps(state, sort_keys=True)
         today = jalali_date_key(t)
+        ok = True
         if evening and state.get("summary_date") != today:
             if send_summary(load_feed(), t):
                 state["summary_date"] = today
                 save_state(state)
-                return True
-            return False
-        print("ساعت سکوت (۲۲:۳۰ تا ۰۱:۰۰)؛ پیام قیمت ارسال یا ویرایش نشد.")
-        return True
+            else:
+                return False
+        try:
+            ok = maybe_send_poll(t, minutes, state, wait_for_summary=True)
+        except Exception as e:
+            print(f"خطا در نظرسنجی: {e}")
+            ok = False
+        if json.dumps(state, sort_keys=True) != before_q:
+            save_state(state)
+        else:
+            print("ساعت سکوت (۲۲:۳۰ تا ۰۱:۰۰)؛ پیام قیمت ارسال یا ویرایش نشد.")
+        return ok
 
     # ---- روال عادی ----
     before = json.dumps(state, sort_keys=True)
@@ -565,7 +593,6 @@ def run_once(force=None):
     if prices:
         groups = [
             ("currency", CURRENCY_TITLE, CURRENCY_SECTIONS),
-            ("global", GLOBAL_TITLE, GLOBAL_SECTIONS),
             ("gold", GOLD_TITLE, GOLD_SECTIONS),
         ]
         for name, title, sections in groups:
@@ -583,9 +610,11 @@ def run_once(force=None):
         print("هیچ قیمتی دریافت نشد؛ پیام قیمت ارسال نشد.")
         ok = False
 
-    # نظرسنجی و آموزش به فید وابسته نیستند
+    # آموزش و نظرسنجی به فید وابسته نیستند. نظرسنجی اینجا فقط «جبرانی» است:
+    # اگر شب قبل نرفته بود، اولین فرصت بعد از ۰۱:۰۰ (تا ۱۰ صبح) می‌رود و آخرین پیام می‌شود.
     try:
         ok = send_daily_items(t, minutes, state) and ok
+        ok = maybe_send_poll(t, minutes, state, wait_for_summary=False) and ok
     except Exception as e:
         print(f"خطا در برنامه‌ی روزانه: {e}")
         ok = False
@@ -599,6 +628,7 @@ def main():
     if not (BOT_TOKEN and CHANNEL_ID):
         raise SystemExit("BOT_TOKEN و CHANNEL_ID را تنظیم کنید.")
 
+    print(f"price_bot نسخه‌ی {BOT_VERSION}")
     force = next((f[2:] for f in ("--summary", "--poll", "--lesson") if f in sys.argv), None)
 
     # حالت یک‌بار اجرا (برای گیت‌هاب): python3 price_bot.py --once
