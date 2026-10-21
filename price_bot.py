@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-ربات کانال قیمت لحظه‌ای ارز، طلا، سکه و نقره (منبع قیمت: tgju) — نسخه‌ی ۱٫۲
+ربات کانال قیمت لحظه‌ای ارز، طلا، سکه و نقره (منبع قیمت: tgju) — نسخه‌ی ۱٫۳
 
 پیام‌های ثابت (بی‌صدا، با ویرایش خودکار اگر قیمت تغییری نکرده):
   ۱) قیمت ارزها (دلار، یورو، پوند، درهم، لیر ترکیه) + بیت‌کوین، اونس جهانی طلا، نفت برنت و نفت خام
@@ -43,7 +43,7 @@ INTERVAL_SECONDS = 300          # فقط در حالت همیشه روشن
 STATE_FILE = "state.json"       # شناسه‌ی پیام‌ها و وضعیت برنامه‌ی روزانه اینجا نگه داشته می‌شود
 LESSONS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "lessons.json")
 
-BOT_VERSION = "1.2"
+BOT_VERSION = "1.3"
 
 # ساعت‌ها به وقت تهران (دقیقه از نیمه‌شب)
 LESSON_MINUTE = 21 * 60         # ۲۱:۰۰ آموزش شبانه
@@ -476,7 +476,7 @@ def send_summary(current, t):
 
 # ---------------- نظرسنجی و آموزش روزانه ----------------
 def send_poll(state, record=True):
-    """نظرسنجی روزانه. نتیجه‌ی آرا تا زمانی که نظرسنجی بسته نشود نمایش داده نمی‌شود."""
+    """نظرسنجی روزانه (ناشناس). نتیجه‌ی آرا بعد از رأی دادن برای هر کاربر نمایش داده می‌شود."""
     idx = state.get("poll_index", 0) % len(POLL_ASSETS)
     asset = POLL_ASSETS[idx]
     payload = {
@@ -485,7 +485,6 @@ def send_poll(state, record=True):
         "options": [{"text": o} for o in POLL_OPTIONS],
         "is_anonymous": True,
         "allows_multiple_answers": False,
-        "hide_results_until_closes": True,
     }
     result = tg("sendPoll", payload)
     if result.get("ok"):
