@@ -3,7 +3,12 @@ name: قیمت‌ها
 on:
   schedule:
     - cron: "2,7,12,17,22,27,32,37,42,47,52,57 * * * *"
-  workflow_dispatch:         # دکمه‌ی اجرای دستی
+  workflow_dispatch:
+    inputs:
+      summary:
+        description: "ارسال فوری جمع‌بندی شبانه (فقط برای تست)"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -26,19 +31,11 @@ jobs:
       - name: نصب کتابخانه
         run: pip install requests
 
-      - name: روشن کردن سرویس قیمت
-        run: |
-          docker run -d --name tgju -p 8080:8080 ghcr.io/amiranmanesh/tgju-api-go:latest
-          for i in $(seq 1 30); do
-            curl -fs http://localhost:8080/healthz && break
-            sleep 2
-          done
-
       - name: ارسال قیمت‌ها به کانال
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           CHANNEL_ID: ${{ secrets.CHANNEL_ID }}
-        run: python3 price_bot.py --once
+        run: python3 price_bot.py --once ${{ inputs.summary && '--summary' || '' }}
 
       - name: ذخیره شناسه پیام
         if: always()
