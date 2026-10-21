@@ -1,36 +1,36 @@
 {
  "currency": {
-  "message_id": 2855,
+  "message_id": 2857,
   "sig": {
-   "price_aed": 73223,
-   "price_dollar_rl": 267105,
-   "price_eur": 300350,
-   "price_gbp": 358590
+   "price_aed": 73250,
+   "price_dollar_rl": 267400,
+   "price_eur": 300220,
+   "price_gbp": 358720
   }
  },
  "global": {
-  "message_id": 2852,
+  "message_id": 2858,
   "sig": {
-   "crypto-bitcoin": 832,
+   "crypto-bitcoin": 834,
    "crypto-tether": 100,
    "ons": 412
   }
  },
  "gold": {
-  "message_id": 2856,
+  "message_id": 2859,
   "sig": {
-   "coin_blubber": 9401000,
-   "geram18": 26628400,
-   "geram24": 35504200,
+   "coin_blubber": 8983000,
+   "geram18": 26652900,
+   "geram24": 35536800,
    "nim": 142560000,
-   "nim_blubber": 12723000,
-   "rob": 75570000,
-   "rob_blubber": 10649000,
+   "nim_blubber": 12644000,
+   "rob": 75430000,
+   "rob_blubber": 10470000,
    "sekeb": 262050000,
-   "sekeb_blubber": 2296000,
-   "sekee": 269180000,
-   "silver_925": 468013,
-   "silver_999": 505960
+   "sekeb_blubber": 2108000,
+   "sekee": 268880000,
+   "silver_925": 472514,
+   "silver_999": 510830
   }
  },
  "message_id": 2728
