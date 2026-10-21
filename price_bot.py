@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-ربات کانال قیمت لحظه‌ای ارز، طلا، سکه و نقره (منبع قیمت: tgju) — نسخه‌ی ۱٫۱
+ربات کانال قیمت لحظه‌ای ارز، طلا، سکه و نقره (منبع قیمت: tgju) — نسخه‌ی ۱٫۲
 
 پیام‌های ثابت (بی‌صدا، با ویرایش خودکار اگر قیمت تغییری نکرده):
   ۱) قیمت ارزها (دلار، یورو، پوند، درهم، لیر ترکیه) + بیت‌کوین، اونس جهانی طلا، نفت برنت و نفت خام
@@ -43,7 +43,7 @@ INTERVAL_SECONDS = 300          # فقط در حالت همیشه روشن
 STATE_FILE = "state.json"       # شناسه‌ی پیام‌ها و وضعیت برنامه‌ی روزانه اینجا نگه داشته می‌شود
 LESSONS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "lessons.json")
 
-BOT_VERSION = "1.1"
+BOT_VERSION = "1.2"
 
 # ساعت‌ها به وقت تهران (دقیقه از نیمه‌شب)
 LESSON_MINUTE = 21 * 60         # ۲۱:۰۰ آموزش شبانه
@@ -343,8 +343,20 @@ def build_group(title, sections, prices):
     return body, signature
 
 
+RLM = "\u200f"   # نشانه‌ی راست‌به‌چپ (حرف راست‌به‌چپِ نامرئی)
+
+
+def rtl(text):
+    """
+    اول هر خط یک نشانه‌ی راست‌به‌چپ می‌گذارد تا تلگرام همه‌ی خط‌ها را راست‌چین کند.
+    بدون این، خطی که با اموجی پرچم (مثل 🇦🇪 و 🇹🇷) شروع شود چپ‌چین و درهم نمایش داده می‌شود،
+    چون اموجی پرچم برای الگوریتم جهت‌دهی «حرف چپ‌به‌راست» حساب می‌شود.
+    """
+    return "\n".join((RLM + line) if line.strip() else line for line in text.split("\n"))
+
+
 def with_footer(body):
-    return f"{body}\n\n🕒 آخرین بروزرسانی: {jalali_stamp()} (به وقت تهران)\n\n{CHANNEL_TAG}"
+    return rtl(f"{body}\n\n🕒 آخرین بروزرسانی: {jalali_stamp()} (به وقت تهران)\n\n{CHANNEL_TAG}")
 
 
 # ---------------- تلگرام و وضعیت ----------------
@@ -442,7 +454,7 @@ def build_summary(current, t):
     day_name = WEEKDAYS[t.weekday()]
     date_text = jalali_date_key(t).translate(PERSIAN_DIGITS)
     header = f"{SUMMARY_TITLE}\n🗓 {day_name} {date_text}"
-    return header + "\n\n" + "\n\n".join(blocks) + f"\n\n{CHANNEL_TAG}"
+    return rtl(header + "\n\n" + "\n\n".join(blocks) + f"\n\n{CHANNEL_TAG}")
 
 
 def send_summary(current, t):
@@ -502,8 +514,8 @@ def send_lesson(state, record=True):
         return True          # فایل نیست؛ خطا حساب نمی‌شود
     idx = state.get("lesson_index", 0) % len(lessons)
     lesson = lessons[idx]
-    text = (f"📚 آموزش امشب\n\n{lesson['title']}\n\n{lesson['body']}\n\n"
-            f"⚠️ مطلب آموزشی عمومی است و توصیه‌ی مالی نیست.\n\n{CHANNEL_TAG}")
+    text = rtl(f"📚 آموزش امشب\n\n{lesson['title']}\n\n{lesson['body']}\n\n"
+               f"⚠️ مطلب آموزشی عمومی است و توصیه‌ی مالی نیست.\n\n{CHANNEL_TAG}")
     result = tg("sendMessage", {"chat_id": CHANNEL_ID, "text": text})
     if result.get("ok"):
         print(f"آموزش شماره‌ی {idx + 1} ارسال شد.")
