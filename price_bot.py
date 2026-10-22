@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-ربات کانال قیمت لحظه‌ای ارز، طلا، سکه و نقره (منبع قیمت: tgju) — نسخه‌ی ۱٫۳
+ربات کانال قیمت لحظه‌ای ارز، طلا، سکه و نقره (منبع قیمت: tgju) — نسخه‌ی ۱٫۵
 
 پیام‌های ثابت (بی‌صدا، با ویرایش خودکار اگر قیمت تغییری نکرده):
   ۱) قیمت ارزها (دلار، یورو، پوند، درهم، لیر ترکیه) + بیت‌کوین، اونس جهانی طلا، نفت برنت و نفت خام
@@ -43,7 +43,7 @@ INTERVAL_SECONDS = 300          # فقط در حالت همیشه روشن
 STATE_FILE = "state.json"       # شناسه‌ی پیام‌ها و وضعیت برنامه‌ی روزانه اینجا نگه داشته می‌شود
 LESSONS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "lessons.json")
 
-BOT_VERSION = "1.3"
+BOT_VERSION = "1.5"
 
 # ساعت‌ها به وقت تهران (دقیقه از نیمه‌شب)
 LESSON_MINUTE = 21 * 60         # ۲۱:۰۰ آموزش شبانه
@@ -54,7 +54,7 @@ POLL_FALLBACK_END_MINUTE = 10 * 60   # اگر نظرسنجی شب از دست ر
 # تغییر قیمت این کلیدها به‌تنهایی پیام جدید نمی‌سازد؛ فقط پیام قبلی ویرایش می‌شود
 # (نقره و بازار جهانی پرنوسان‌اند). اگر قیمت بقیه‌ی آیتم‌ها تغییر کند، پیام جدید می‌رود.
 EDIT_ONLY_KEYS = {"silver_925", "silver_999", "crypto-bitcoin", "ons",
-                  "energy-brent-oil", "energy-crude-oil"}
+                  "oil_brent", "oil"}
 
 # اموجی جهت تغییر قیمت. اموجی «فلش سبز رو به بالا» وجود ندارد؛
 # نزدیک‌ترین حالت دایره‌ی رنگی کنار فلش است.
@@ -86,8 +86,8 @@ CURRENCY_SECTIONS = [
     [
         ("₿", "بیت‌کوین", "crypto-bitcoin"),
         ("🌍", "اونس جهانی طلا", "ons"),
-        ("🛢", "نفت برنت", "energy-brent-oil"),
-        ("🛢", "نفت خام", "energy-crude-oil"),
+        ("🛢", "نفت برنت", "oil_brent"),
+        ("🛢", "نفت خام", "oil"),
     ],
 ]
 # واحد قیمت این کلیدها را از روی اندازه‌ی عدد تشخیص می‌دهیم:
@@ -96,8 +96,8 @@ CURRENCY_SECTIONS = [
 GLOBAL_META = {
     "crypto-bitcoin": ("usd", 0),
     "ons": ("usd", 2),
-    "energy-brent-oil": ("usd", 2),
-    "energy-crude-oil": ("usd", 2),
+    "oil_brent": ("usd", 2),
+    "oil": ("usd", 2),
 }
 
 GOLD_TITLE = "🥇 قیمت لحظه‌ای طلا، سکه و نقره"
@@ -173,6 +173,19 @@ def to_number(value):
     return float(text.replace(",", "").strip())
 
 
+STALE_DAYS = 7   # داده‌ای که بیش از این تعداد روز بروز نشده باشد، نمایش داده نمی‌شود
+
+
+def is_stale(entry):
+    """اگر آخرین بروزرسانی آیتم (فیلد ts فید) بیش از STALE_DAYS روز قبل بود True برمی‌گرداند."""
+    try:
+        ts = datetime.strptime(str(entry["ts"])[:19], "%Y-%m-%d %H:%M:%S")
+    except Exception:
+        return False
+    now = tehran_now().replace(tzinfo=None)
+    return (now - ts) > timedelta(days=STALE_DAYS)
+
+
 def parse_item(key, entry):
     """
     یک آیتم فید را به دیکشنری تبدیل می‌کند:
@@ -214,6 +227,9 @@ def fetch_prices(current=None):
         entry = current.get(key)
         if not entry:
             missing.append(key)
+            continue
+        if is_stale(entry):
+            print(f"داده‌ی {key} قدیمی است (آخرین بروزرسانی {entry.get('ts')})؛ نمایش داده نشد.")
             continue
         try:
             result[key] = parse_item(key, entry)
@@ -434,6 +450,9 @@ def build_summary(current, t):
         entry = current.get(key)
         if not entry:
             print(f"جمع‌بندی: کلید {key} در فید نبود.")
+            continue
+        if is_stale(entry):
+            print(f"جمع‌بندی: داده‌ی {key} قدیمی است ({entry.get('ts')})؛ رد شد.")
             continue
         try:
             low = to_number(entry["l"]) / 10
