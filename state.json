@@ -1,12 +1,12 @@
 {
  "currency": {
-  "message_id": 2915,
+  "message_id": 2917,
   "sig": {
-   "price_aed": 74578,
-   "price_dollar_rl": 271865,
-   "price_eur": 305260,
-   "price_gbp": 364630,
-   "price_try": 5510
+   "price_aed": 74717,
+   "price_dollar_rl": 272410,
+   "price_eur": 306030,
+   "price_gbp": 365420,
+   "price_try": 5520
   }
  },
  "global": {
@@ -18,18 +18,18 @@
   }
  },
  "gold": {
-  "message_id": 2916,
+  "message_id": 2918,
   "sig": {
-   "coin_blubber": 13071000,
-   "geram18": 27147800,
-   "geram24": 36196700,
+   "coin_blubber": 12058000,
+   "geram18": 27225400,
+   "geram24": 36300200,
    "nim": 143980000,
-   "nim_blubber": 13628000,
+   "nim_blubber": 13129000,
    "rob": 76520000,
-   "rob_blubber": 11342000,
-   "sekeb": 265015000,
-   "sekeb_blubber": 4246000,
-   "sekee": 273855000
+   "rob_blubber": 11092000,
+   "sekeb": 265010000,
+   "sekeb_blubber": 3223000,
+   "sekee": 273860000
   }
  },
  "lesson_date": "1405/07/29",
